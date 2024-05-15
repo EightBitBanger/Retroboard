@@ -1,6 +1,6 @@
-## Retroboard
+### Circuit board layouts
 
-<p align="center">
-  <img src="https://github.com/RetroBytes32/Retroboard/blob/main/front.png"  width="400" height="400">
-  <img src="https://github.com/RetroBytes32/Retroboard/blob/main/back.png"  width="400" height="400">
+<p align="left">
+  <img src="https://github.com/RetroBytes32/Retroboard/blob/main/front.png"  width="300" height="300">
 </p>
+
