@@ -1,3 +1,6 @@
+#ifndef _INT_HANDLER__
+#define _INT_HANDLER__
+
 // Card select interrupt handler
 #define _CONTROL_IN__     PINB
 #define _SIGNAL_READ__    1
@@ -9,33 +12,46 @@
 #define _BUS_IN__         PINA
 #define _BUS_DDR__        DDRA
 
-void shiftFrameUp(void);
+union Resigner {
+    uint8_t unsign;
+    int8_t sign;
+};
 
+static inline void shiftFrameUp(void);
+
+static uint8_t mutex = 0;
+static uint8_t command_issued = 0;
 
 ISR (INT2_vect) {
 	
+	if (command_issued != 0) 
+        return;
+    
+	if (mutex == 1) 
+        return;
+    mutex = 1;
+    
     // READ request
 	if ((_CONTROL_IN__ & (1 << _SIGNAL_READ__)) != (1 << _SIGNAL_READ__)) {
 		
 		_BUS_DIR__ = 0b00001000; // Output on data bus
-		
 		_BUS_DDR__ = 0xff;
 		
-		if (_ADDRESS_IN__ < 0x0a) {
-            
+		if (_ADDRESS_IN__ <= 0x10) {
             _BUS_OUT__ = deviceROM[_ADDRESS_IN__];
-            
 		} else {
             
-            _BUS_OUT__ = char_rom[_ADDRESS_IN__];
+            // Access registry state
+            _BUS_OUT__ = frameBuffer.registery[_ADDRESS_IN__ - 0x10];
+            
         }
         
-		while ((_CONTROL_IN__ & (1 << _SIGNAL_READ__)) != (1 << _SIGNAL_READ__)) {
-			__asm__("nop");
-		}
+        // Wait until deselected
+		while ((_CONTROL_IN__ & (1 << _SIGNAL_READ__)) != (1 << _SIGNAL_READ__)) __asm__("nop");
 		
 		_BUS_DIR__ = 0b00011000; // Disable the bus
 		
+		mutex = 0;
 		return;
 	}
 	
@@ -43,40 +59,77 @@ ISR (INT2_vect) {
 	if ((_CONTROL_IN__ & (1 << _SIGNAL_WRITE__)) != (1 << _SIGNAL_WRITE__)) {
 		
 		_BUS_DIR__ = 0b00000000; // Input from the bus
-		
 		_BUS_DDR__ = 0x00;
 		
+		uint32_t address = _ADDRESS_IN__;
+		uint32_t byte = _BUS_IN__;
+		
+		_BUS_DDR__ = 0xff;
+		_BUS_DIR__ = 0b00011000; // Disable the bus
+		
 		// Write the byte to device RAM
-		if (_ADDRESS_IN__ >= 0x0a) {
+		if (address >= 0x10) {
             
-            uint32_t address_offset = frameBuffer.registery[2] + (frameBuffer.registery[1] * 128);
+            // Normal character placement
             
-            // VRAM or CHAR_RAM
-            if (frameBuffer.registery[7] == 0) {
+            switch (frameBuffer.registery[7]) {
+            default:
                 
-                frameBuffer.registery[_ADDRESS_IN__ + address_offset] = _BUS_IN__;
+            case 0:{ // VRAM
+                uint32_t address_offset = frameBuffer.registery[2] + (frameBuffer.registery[1] * 128);
+                frameBuffer.back[address + address_offset - 0x10] = byte;
+                break;
+            }
                 
-            } else {
+            // Character ram is now part of program memory
+            //case 1: { // CHAR_RAM
+            //    uint32_t address_offset = frameBuffer.registery[2] * 6;
+            //    char_rom[address + address_offset - 0x10] = byte;
+            //    break;
+            //    }
                 
-                char_rom[ (_ADDRESS_IN__ - 0x0a) + (frameBuffer.registery[2] * 6) ] = _BUS_IN__;
+            case 2: { // SPRITE_SHEET
+                uint32_t address_offset = frameBuffer.registery[2];
+                sprite_sheet[ ((address - 0x10) * 8) + address_offset ] = byte;
+                break;
+                }
+                
+            case 3: { // VERTEX_BUFFER
+                uint32_t address_offset = frameBuffer.registery[2];
+                union Resigner signswap;
+                signswap.unsign = byte;
+                vertex_buffer[ (address - 0x10) + address_offset ] = signswap.sign;
+                break;
+                }
+                
+            case 4: { // UNIFORM_VARIABLES
+                uint32_t address_offset = frameBuffer.registery[2];
+                frameBuffer.uniforms.bytes[ (address - 0x10) + address_offset ] = byte;
+                break;
+                }
             }
             
 		} else {
             
-            frameBuffer.registery[_ADDRESS_IN__] = _BUS_IN__;
+            frameBuffer.registery[address] = byte;
             
             if (frameBuffer.registery[5] != 0) 
-                shiftFrameUp();
+                command_issued = 1;
+            if (frameBuffer.registery[9] != 0) 
+                command_issued = 1;
+            if (frameBuffer.registery[0x0E] != 0) 
+                command_issued = 1;
+            if (frameBuffer.registery[0x0F] != 0) 
+                command_issued = 1;
             
         }
 		
-		_BUS_DDR__ = 0xff;
-		
-		_BUS_DIR__ = 0b00011000; // Disable the bus
-		
+		mutex = 0;
 		return;
 	}
 	
+	mutex = 0;
 	return;
 }
 
+#endif
